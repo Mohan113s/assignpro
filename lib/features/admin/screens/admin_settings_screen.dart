@@ -181,7 +181,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                     keyboardType: TextInputType.phone,
                     decoration: const InputDecoration(
                       labelText: 'Admin Support Phone',
-                      hintText: '+91 9000000000',
+                      hintText: '+91 9640898061',
                       prefixIcon: Icon(Icons.support_agent_rounded, size: 20),
                       helperText:
                           'Users will call this number via "Contact Admin"',
