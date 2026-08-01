@@ -165,6 +165,34 @@ class AppProvider extends ChangeNotifier {
     return count;
   }
 
+  /// Manually assign a list of leads to a specific user
+  Future<void> assignLeadsToUser(List<LeadModel> leads, String userId) async {
+    for (final lead in leads) {
+      final updated = lead.copyWith(
+        assignedUserId: userId,
+        status: lead.status == 'Pending' ? 'Pending' : lead.status,
+      );
+      await LocalStorageService.updateLead(updated);
+    }
+    _leads = LocalStorageService.getLeads();
+    notifyListeners();
+  }
+
+  /// Remove assignment from a lead (make it unassigned)
+  Future<void> unassignLead(LeadModel lead) async {
+    final updated = LeadModel(
+      id: lead.id,
+      customerName: lead.customerName,
+      phoneNumber: lead.phoneNumber,
+      status: 'Pending',
+      notes: lead.notes,
+      createdAt: lead.createdAt,
+    );
+    await LocalStorageService.updateLead(updated);
+    _leads = LocalStorageService.getLeads();
+    notifyListeners();
+  }
+
   Future<void> updateLead(LeadModel lead) async {
     await LocalStorageService.updateLead(lead);
     _leads = LocalStorageService.getLeads();

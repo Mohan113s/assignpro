@@ -6,6 +6,7 @@ import '../../../core/router/app_router.dart';
 import 'admin_home_tab.dart';
 import 'admin_users_screen.dart';
 import 'admin_leads_screen.dart';
+import 'admin_reports_screen.dart';
 import 'admin_settings_screen.dart';
 import '../../../shared/widgets/common_widgets.dart';
 
@@ -34,6 +35,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       icon: Icons.contacts_rounded,
       label: 'Leads',
       screen: const AdminLeadsScreen(),
+    ),
+    _NavItem(
+      icon: Icons.bar_chart_rounded,
+      label: 'Reports',
+      screen: const AdminReportsScreen(),
     ),
     _NavItem(
       icon: Icons.settings_rounded,
@@ -108,6 +114,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           backgroundColor: Colors.white,
           elevation: 0,
           indicatorColor: AppTheme.primaryBlue.withOpacity(0.12),
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           destinations: _navItems.map((item) {
             return NavigationDestination(
               icon: Icon(item.icon, color: AppTheme.textSecondary),
