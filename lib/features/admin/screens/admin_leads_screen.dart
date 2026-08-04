@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
-import 'dart:io';
 import '../../../core/providers/app_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/common_widgets.dart';
 import '../../../features/leads/models/lead_model.dart';
 import '../../../features/auth/models/user_model.dart';
+import '../../../core/network/api_service.dart';
 
 class AdminLeadsScreen extends StatefulWidget {
   const AdminLeadsScreen({super.key});
@@ -76,61 +76,37 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
         return;
       }
 
-      final file = File(result.files.single.path!);
-      final content = await file.readAsString();
-      final lines = content
-          .split('\n')
-          .map((l) => l.trim())
-          .where((l) => l.isNotEmpty)
-          .toList();
-
-      int start = 0;
-      if (lines.isNotEmpty) {
-        final firstFields = lines[0].split(',');
-        if (firstFields.any(
-          (f) =>
-              f.toLowerCase().contains('name') ||
-              f.toLowerCase().contains('phone'),
-        )) {
-          start = 1;
-        }
-      }
-
-      final leads = <LeadModel>[];
-      for (int i = start; i < lines.length; i++) {
-        final cols = lines[i].split(',');
-        if (cols.isEmpty) continue;
-
-        String phone = '';
-        String name = '';
-
-        if (cols.length == 1) {
-          phone = cols[0].trim().replaceAll('"', '');
-        } else {
-          name = cols[0].trim().replaceAll('"', '');
-          phone = cols[1].trim().replaceAll('"', '');
-        }
-
-        if (phone.isEmpty) continue;
-        leads.add(LeadModel(customerName: name, phoneNumber: phone));
+      final filePath = result.files.single.path;
+      if (filePath == null) {
+        AppSnackbar.error(context, 'Could not access the file.');
+        setState(() => _isImporting = false);
+        return;
       }
 
       if (!mounted) return;
 
-      if (leads.isEmpty) {
+      // Upload CSV directly to backend as multipart
+      final imported = await ApiService.importLeadsFromFile(filePath);
+
+      if (!mounted) return;
+
+      if (imported.isEmpty) {
         AppSnackbar.error(context, 'No valid leads found in the CSV file.');
         setState(() => _isImporting = false);
         return;
       }
 
-      await context.read<AppProvider>().importLeads(leads);
+      // Reload all leads from backend
+      await context.read<AppProvider>().distributeLeads();
 
       if (mounted) {
         AppSnackbar.success(
           context,
-          '${leads.length} leads imported! Now assign them to users.',
+          '${imported.length} leads imported! Now assign them to users.',
         );
       }
+    } on ApiException catch (e) {
+      if (mounted) AppSnackbar.error(context, e.message);
     } catch (e) {
       if (mounted) AppSnackbar.error(context, 'Import failed: $e');
     } finally {

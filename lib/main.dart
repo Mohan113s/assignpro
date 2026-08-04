@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'core/providers/app_provider.dart';
 import 'core/router/app_router.dart';
-import 'core/services/local_storage_service.dart';
+import 'core/storage/token_storage.dart';
 import 'core/theme/app_theme.dart';
 
 Future<void> main() async {
@@ -22,7 +22,8 @@ Future<void> main() async {
     ),
   );
 
-  await LocalStorageService.init();
+  // Initialize token storage (SharedPreferences for JWT only)
+  await TokenStorage.init();
 
   runApp(
     ChangeNotifierProvider(

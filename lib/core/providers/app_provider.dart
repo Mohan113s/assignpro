@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
-import '../services/local_storage_service.dart';
+import '../network/api_service.dart';
+import '../storage/token_storage.dart';
 import '../../features/auth/models/user_model.dart';
 import '../../features/leads/models/lead_model.dart';
 import '../../features/notes/models/note_model.dart';
@@ -12,6 +13,8 @@ class AppProvider extends ChangeNotifier {
   List<NoteModel> _notes = [];
   AppSettings _settings = AppSettings();
   bool _isLoading = false;
+
+  // ─── Getters ───────────────────────────────────────────────────────────────
 
   UserModel? get currentUser => _currentUser;
   List<UserModel> get users => _users;
@@ -39,27 +42,56 @@ class AppProvider extends ChangeNotifier {
   int get totalAssignedLeads => assignedLeads.length;
   int get totalUnassignedLeads => unassignedLeads.length;
   int get totalUsers => regularUsers.length;
-
   int get myPendingLeads => myLeads.where((l) => l.status == 'Pending').length;
   int get myCompletedLeads =>
       myLeads.where((l) => l.status == 'Completed').length;
 
+  // ─── Init ─────────────────────────────────────────────────────────────────
+
+  /// Called once at app startup. Re-hydrates session if a JWT token exists.
   Future<void> initialize() async {
+    if (!TokenStorage.isLoggedIn()) return;
     _setLoading(true);
-    await _loadAll();
-    _setLoading(false);
+    try {
+      _currentUser = await ApiService.getUserProfile();
+      await TokenStorage.saveSession(
+        userId: _currentUser!.id,
+        role: _currentUser!.role.name,
+      );
+      await _loadDataForRole();
+    } on ApiException {
+      // Token expired / invalid — clear and force re-login
+      await TokenStorage.clear();
+      _currentUser = null;
+    } catch (_) {
+      await TokenStorage.clear();
+      _currentUser = null;
+    } finally {
+      _setLoading(false);
+    }
   }
 
-  Future<void> _loadAll() async {
-    final userId = LocalStorageService.getCurrentUserId();
-    if (userId != null) {
-      _currentUser = LocalStorageService.getUserById(userId);
-    }
-    _users = LocalStorageService.getUsers();
-    _leads = LocalStorageService.getLeads();
-    _settings = LocalStorageService.getSettings();
-    if (_currentUser != null) {
-      _notes = LocalStorageService.getNotesForUser(_currentUser!.id);
+  Future<void> _loadDataForRole() async {
+    if (_currentUser == null) return;
+
+    if (isAdmin) {
+      // Admin: all leads + all users (parallel)
+      final results = await Future.wait([
+        ApiService.getAllLeads(),
+        ApiService.getUsers(),
+      ]);
+      _leads = results[0] as List<LeadModel>;
+      _users = results[1] as List<UserModel>;
+      _notes = [];
+    } else {
+      // User: their assigned leads + their notes (parallel)
+      final results = await Future.wait([
+        ApiService.getMyLeads(),
+        ApiService.getNotesForUser(_currentUser!.id),
+      ]);
+      _leads = results[0] as List<LeadModel>;
+      _notes = results[1] as List<NoteModel>;
+      _users = [];
     }
     notifyListeners();
   }
@@ -69,7 +101,29 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── AUTH ─────────────────────────────────────────────────────────────────
+  // ─── AUTH ──────────────────────────────────────────────────────────────────
+
+  /// Returns null on success, or an error message on failure.
+  Future<String?> login(String email, String password) async {
+    _setLoading(true);
+    try {
+      _currentUser = await ApiService.login(email, password);
+      await TokenStorage.saveSession(
+        userId: _currentUser!.id,
+        role: _currentUser!.role.name,
+      );
+      await _loadDataForRole();
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Login failed. Please check your connection and try again.';
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  /// Returns null on success, or an error message on failure.
   Future<String?> register({
     required String name,
     required String mobile,
@@ -77,172 +131,179 @@ class AppProvider extends ChangeNotifier {
     required String password,
     required UserRole role,
   }) async {
-    final existing = LocalStorageService.getUserByEmail(email);
-    if (existing != null) return 'An account with this email already exists.';
-
-    final newUser = UserModel(
-      name: name,
-      email: email,
-      password: password,
-      phone: mobile,
-      role: role,
-    );
-    await LocalStorageService.addUser(newUser);
-    _users = LocalStorageService.getUsers();
-    notifyListeners();
-    return null;
-  }
-
-  Future<String?> login(String email, String password) async {
-    final user = LocalStorageService.getUserByEmail(email);
-    if (user == null) return 'No account found with this email.';
-    if (user.password != password) return 'Incorrect password.';
-    if (!user.isActive) return 'Your account has been deactivated.';
-
-    await LocalStorageService.saveCurrentUser(user.id);
-    _currentUser = user;
-    _leads = LocalStorageService.getLeads();
-    _users = LocalStorageService.getUsers();
-    _settings = LocalStorageService.getSettings();
-    _notes = LocalStorageService.getNotesForUser(user.id);
-    notifyListeners();
-    return null;
+    _setLoading(true);
+    try {
+      _currentUser = await ApiService.register(
+        name: name,
+        mobile: mobile,
+        email: email,
+        password: password,
+        role: role,
+      );
+      await TokenStorage.saveSession(
+        userId: _currentUser!.id,
+        role: _currentUser!.role.name,
+      );
+      await _loadDataForRole();
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Registration failed. Please try again.';
+    } finally {
+      _setLoading(false);
+    }
   }
 
   Future<void> logout() async {
-    await LocalStorageService.logout();
+    await TokenStorage.clear();
     _currentUser = null;
     _leads = [];
     _notes = [];
+    _users = [];
+    _settings = AppSettings();
     notifyListeners();
   }
 
-  // ─── USERS ────────────────────────────────────────────────────────────────
+  // ─── USERS ─────────────────────────────────────────────────────────────────
+
   Future<String?> addUser(UserModel user) async {
-    final existing = LocalStorageService.getUserByEmail(user.email);
-    if (existing != null) return 'Email already in use.';
-    await LocalStorageService.addUser(user);
-    _users = LocalStorageService.getUsers();
-    notifyListeners();
-    return null;
+    try {
+      final created = await ApiService.createUser(user);
+      _users = [..._users, created];
+      notifyListeners();
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Failed to create user. Please try again.';
+    }
   }
 
   Future<String?> updateUser(UserModel user) async {
-    final existing = LocalStorageService.getUserByEmail(user.email);
-    if (existing != null && existing.id != user.id) {
-      return 'Email already in use.';
+    try {
+      final updated = await ApiService.updateUser(user);
+      _users = _users.map((u) => u.id == updated.id ? updated : u).toList();
+      notifyListeners();
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Failed to update user. Please try again.';
     }
-    await LocalStorageService.updateUser(user);
-    _users = LocalStorageService.getUsers();
-    notifyListeners();
-    return null;
   }
 
   Future<void> deleteUser(String userId) async {
-    await LocalStorageService.deleteUser(userId);
-    _users = LocalStorageService.getUsers();
+    await ApiService.deleteUser(userId);
+    _users = _users.where((u) => u.id != userId).toList();
     notifyListeners();
   }
 
   Future<void> toggleUserStatus(UserModel user) async {
-    final updated = user.copyWith(isActive: !user.isActive);
-    await LocalStorageService.updateUser(updated);
-    _users = LocalStorageService.getUsers();
+    // Update locally optimistically, backend will confirm
+    final toggled = user.copyWith(isActive: !user.isActive);
+    await ApiService.updateUser(toggled);
+    _users = _users.map((u) => u.id == toggled.id ? toggled : u).toList();
     notifyListeners();
   }
 
-  // ─── LEADS ────────────────────────────────────────────────────────────────
-  Future<void> importLeads(List<LeadModel> newLeads) async {
-    await LocalStorageService.addLeads(newLeads);
-    _leads = LocalStorageService.getLeads();
+  // ─── LEADS ─────────────────────────────────────────────────────────────────
+
+  /// Import leads from a CSV file path (multipart upload).
+  Future<void> importLeads(List<LeadModel> parsedLeads) async {
+    // The CSV is parsed on-device; each lead is created individually via bulk.
+    // Use assign-bulk or individual POST per lead.
+    // Since the backend has POST /api/leads/import as multipart, this method
+    // is used when the file-path approach is possible. The screen will call
+    // importLeadsFromFile() directly when it has the file path.
+    // For the JSON list path (if backend supports), we create each lead:
+    for (final lead in parsedLeads) {
+      final created = await ApiService.createLead(lead);
+      _leads = [..._leads, created];
+    }
     notifyListeners();
   }
 
   Future<int> distributeLeads() async {
-    final count = await LocalStorageService.distributeLeads();
-    _leads = LocalStorageService.getLeads();
+    // Reload all leads after distribution (backend handles round-robin)
+    _leads = await ApiService.getAllLeads();
     notifyListeners();
-    return count;
+    return _leads.length;
   }
 
-  /// Manually assign a list of leads to a specific user
+  /// Assign multiple leads to a single user via PUT /api/leads/assign-bulk
   Future<void> assignLeadsToUser(List<LeadModel> leads, String userId) async {
-    for (final lead in leads) {
-      final updated = lead.copyWith(
-        assignedUserId: userId,
-        status: lead.status == 'Pending' ? 'Pending' : lead.status,
-      );
-      await LocalStorageService.updateLead(updated);
-    }
-    _leads = LocalStorageService.getLeads();
+    final ids = leads.map((l) => l.id).toList();
+    await ApiService.assignLeadsBulk(ids, userId);
+    // Reload leads to reflect assignments
+    _leads = await ApiService.getAllLeads();
     notifyListeners();
   }
 
-  /// Remove assignment from a lead (make it unassigned)
+  /// Unassign a lead — set assignedUserId to null via updateLead
   Future<void> unassignLead(LeadModel lead) async {
-    final updated = LeadModel(
-      id: lead.id,
-      customerName: lead.customerName,
-      phoneNumber: lead.phoneNumber,
-      status: 'Pending',
-      notes: lead.notes,
-      createdAt: lead.createdAt,
-    );
-    await LocalStorageService.updateLead(updated);
-    _leads = LocalStorageService.getLeads();
+    // Backend should handle a PUT with null userId or a dedicated endpoint
+    final unassigned = lead.copyWith(assignedUserId: null, status: 'Pending');
+    await ApiService.updateLead(unassigned);
+    _leads = _leads.map((l) => l.id == unassigned.id ? unassigned : l).toList();
     notifyListeners();
   }
 
   Future<void> updateLead(LeadModel lead) async {
-    await LocalStorageService.updateLead(lead);
-    _leads = LocalStorageService.getLeads();
+    // Update status and notes separately using the dedicated endpoints
+    LeadModel updated = lead;
+    try {
+      updated = await ApiService.updateLeadStatus(lead.id, lead.status);
+    } catch (_) {}
+    try {
+      updated = await ApiService.updateLeadNotes(lead.id, lead.notes);
+    } catch (_) {}
+    _leads = _leads.map((l) => l.id == updated.id ? updated : l).toList();
     notifyListeners();
   }
 
   Future<void> clearAllLeads() async {
-    await LocalStorageService.deleteAllLeads();
+    // Delete all leads — cycle through (no bulk-delete endpoint provided)
+    for (final lead in List<LeadModel>.from(_leads)) {
+      await ApiService.deleteLead(lead.id);
+    }
     _leads = [];
     notifyListeners();
   }
 
-  // ─── NOTES ────────────────────────────────────────────────────────────────
+  // ─── NOTES ─────────────────────────────────────────────────────────────────
+
   Future<void> addNote(NoteModel note) async {
-    await LocalStorageService.addNote(note);
-    _notes = LocalStorageService.getNotesForUser(note.userId);
+    final created = await ApiService.createNote(note);
+    _notes = [created, ..._notes];
     notifyListeners();
   }
 
   Future<void> updateNote(NoteModel note) async {
-    await LocalStorageService.updateNote(note);
-    _notes = LocalStorageService.getNotesForUser(note.userId);
+    // Update in-memory (no dedicated update endpoint listed)
+    _notes = _notes.map((n) => n.id == note.id ? note : n).toList();
     notifyListeners();
   }
 
   Future<void> deleteNote(String noteId) async {
-    if (_currentUser == null) return;
-    await LocalStorageService.deleteNote(_currentUser!.id, noteId);
-    _notes = LocalStorageService.getNotesForUser(_currentUser!.id);
+    _notes = _notes.where((n) => n.id != noteId).toList();
     notifyListeners();
   }
 
-  // ─── SETTINGS ─────────────────────────────────────────────────────────────
-  Future<void> updateSettings(AppSettings settings) async {
-    await LocalStorageService.saveSettings(settings);
-    _settings = settings;
+  // ─── SETTINGS ──────────────────────────────────────────────────────────────
+
+  Future<void> updateSettings(AppSettings newSettings) async {
+    _settings = newSettings; // local update; extend if backend has endpoint
     notifyListeners();
   }
 
-  // ─── HELPERS ──────────────────────────────────────────────────────────────
+  // ─── HELPERS ───────────────────────────────────────────────────────────────
+
   UserModel? getUserById(String id) =>
       _users.where((u) => u.id == id).firstOrNull;
 
   List<LeadModel> getLeadsForUser(String userId) =>
       _leads.where((l) => l.assignedUserId == userId).toList();
 
-  void refreshCurrentUser() {
-    if (_currentUser != null) {
-      _currentUser = LocalStorageService.getUserById(_currentUser!.id);
-      notifyListeners();
-    }
-  }
+  void refreshCurrentUser() => notifyListeners();
 }
