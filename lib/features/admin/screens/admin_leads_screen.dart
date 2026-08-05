@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../../core/providers/app_provider.dart';
@@ -66,9 +67,11 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
   Future<void> _importCSV() async {
     setState(() => _isImporting = true);
     try {
+      // Support BOTH CSV and Excel (.xlsx)
       final result = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv', 'txt'],
+        allowedExtensions: ['csv', 'xlsx', 'txt'],
+        withData: kIsWeb, // On web we need bytes; on mobile we use file path
       );
 
       if (result == null || result.files.isEmpty) {
@@ -76,33 +79,61 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
         return;
       }
 
-      final filePath = result.files.single.path;
-      if (filePath == null) {
-        AppSnackbar.error(context, 'Could not access the file.');
-        setState(() => _isImporting = false);
-        return;
+      final file = result.files.single;
+      Map<String, dynamic> summary;
+
+      if (kIsWeb) {
+        // Web: file path not available — use bytes approach
+        final bytes = file.bytes;
+        if (bytes == null || bytes.isEmpty) {
+          if (mounted) AppSnackbar.error(context, 'Could not read file bytes.');
+          setState(() => _isImporting = false);
+          return;
+        }
+        // For web, send raw bytes as multipart using a temporary workaround.
+        // We'll use the filename to detect type and POST as multipart.
+        // Note: http.MultipartFile.fromBytes works on web.
+        summary = await ApiService.importLeadsFromBytes(
+          bytes: bytes,
+          fileName: file.name,
+        );
+      } else {
+        // Mobile/Desktop: use file path for multipart upload
+        final filePath = file.path;
+        if (filePath == null) {
+          if (mounted)
+            AppSnackbar.error(context, 'Could not access file path.');
+          setState(() => _isImporting = false);
+          return;
+        }
+        summary = await ApiService.importLeadsFromFile(filePath);
       }
 
       if (!mounted) return;
 
-      // Upload CSV directly to backend as multipart
-      final imported = await ApiService.importLeadsFromFile(filePath);
+      // Extract summary stats
+      final totalRecords = summary['totalRecords'] as int? ?? 0;
+      final imported = summary['imported'] as int? ?? 0;
+      final duplicates = summary['duplicates'] as int? ?? 0;
+      final failed = summary['failed'] as int? ?? 0;
+      final invalid = summary['invalid'] as int? ?? 0;
 
-      if (!mounted) return;
-
-      if (imported.isEmpty) {
-        AppSnackbar.error(context, 'No valid leads found in the CSV file.');
+      if (imported == 0 && totalRecords == 0) {
+        AppSnackbar.error(context, 'No valid leads found in the file.');
         setState(() => _isImporting = false);
         return;
       }
 
-      // Reload all leads from backend
-      await context.read<AppProvider>().distributeLeads();
+      // Reload leads from backend
+      await context.read<AppProvider>().refreshLeads();
 
       if (mounted) {
-        AppSnackbar.success(
-          context,
-          '${imported.length} leads imported! Now assign them to users.',
+        _showImportSummaryDialog(
+          totalRecords: totalRecords,
+          imported: imported,
+          duplicates: duplicates,
+          failed: failed,
+          invalid: invalid,
         );
       }
     } on ApiException catch (e) {
@@ -112,6 +143,72 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
     } finally {
       if (mounted) setState(() => _isImporting = false);
     }
+  }
+
+  void _showImportSummaryDialog({
+    required int totalRecords,
+    required int imported,
+    required int duplicates,
+    required int failed,
+    required int invalid,
+  }) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(
+              Icons.check_circle_rounded,
+              color: Color(0xFF2E7D32),
+              size: 22,
+            ),
+            SizedBox(width: 8),
+            Text(
+              'Import Summary',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _summaryRow('Total Records', totalRecords, AppTheme.textSecondary),
+            const Divider(height: 20),
+            _summaryRow('✅ Imported', imported, const Color(0xFF2E7D32)),
+            _summaryRow('⚠️ Duplicates', duplicates, AppTheme.warningColor),
+            _summaryRow('❌ Failed', failed, AppTheme.errorColor),
+            _summaryRow('🚫 Invalid', invalid, AppTheme.errorColor),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+    );
+  }
+
+  Widget _summaryRow(String label, int count, Color color) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 13)),
+          Text(
+            count.toString(),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showAssignDialog(List<LeadModel> selectedLeads) async {
@@ -178,7 +275,7 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
                     Expanded(
                       child: _ActionButton(
                         icon: Icons.upload_file_rounded,
-                        label: 'Import CSV',
+                        label: 'Import CSV / Excel',
                         onTap: _isImporting ? null : _importCSV,
                         loading: _isImporting,
                       ),

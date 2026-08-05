@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'api_constants.dart';
 import '../storage/token_storage.dart';
 import '../../features/auth/models/user_model.dart';
 import '../../features/leads/models/lead_model.dart';
 import '../../features/notes/models/note_model.dart';
+import '../../features/settings/models/app_settings.dart';
 
 // ─── Exception ────────────────────────────────────────────────────────────────
 
@@ -20,15 +22,23 @@ class ApiException implements Exception {
 }
 
 // ─── ApiService ───────────────────────────────────────────────────────────────
+/// Single, canonical API service for the entire AssignPro application.
+/// Used by Flutter Web, Flutter Android, and GitHub Pages — ALL point to the
+/// same Render backend via [ApiConstants.baseUrl].
+///
+/// Authentication: JWT stored in SharedPreferences via [TokenStorage].
+/// Multiple device login is FULLY supported — JWT is stateless.
 
 class ApiService {
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── URI builder ────────────────────────────────────────────────────────────
 
   static Uri _uri(String path, [Map<String, String>? queryParams]) {
     final base = Uri.parse('${ApiConstants.baseUrl}$path');
     if (queryParams == null || queryParams.isEmpty) return base;
     return base.replace(queryParameters: queryParams);
   }
+
+  // ── Headers ────────────────────────────────────────────────────────────────
 
   static Map<String, String> _headers({bool includeAuth = true}) {
     final h = <String, String>{
@@ -43,6 +53,8 @@ class ApiService {
     }
     return h;
   }
+
+  // ── Response helpers ───────────────────────────────────────────────────────
 
   static dynamic _decode(http.Response res) {
     if (res.body.isEmpty) return null;
@@ -68,7 +80,7 @@ class ApiService {
 
   static ApiException _wrap(dynamic e) {
     if (e is ApiException) return e;
-    if (e is SocketException) {
+    if (!kIsWeb && e is SocketException) {
       return ApiException('No internet connection. Please check your network.');
     }
     if (e is TimeoutException) {
@@ -76,74 +88,6 @@ class ApiService {
     }
     return ApiException('Unexpected error: $e');
   }
-
-  // ── HTTP verbs ─────────────────────────────────────────────────────────────
-
-  static Future<http.Response> _get(
-    String path, [
-    Map<String, String>? q,
-  ]) async {
-    try {
-      return await http
-          .get(_uri(path, q), headers: _headers())
-          .timeout(ApiConstants.timeout);
-    } catch (e) {
-      throw _wrap(e);
-    }
-  }
-
-  static Future<http.Response> _post(
-    String path,
-    Map<String, dynamic> body, {
-    bool auth = true,
-  }) async {
-    try {
-      return await http
-          .post(
-            _uri(path),
-            headers: _headers(includeAuth: auth),
-            body: jsonEncode(body),
-          )
-          .timeout(ApiConstants.timeout);
-    } catch (e) {
-      throw _wrap(e);
-    }
-  }
-
-  static Future<http.Response> _put(
-    String path,
-    Map<String, dynamic> body,
-  ) async {
-    try {
-      return await http
-          .put(_uri(path), headers: _headers(), body: jsonEncode(body))
-          .timeout(ApiConstants.timeout);
-    } catch (e) {
-      throw _wrap(e);
-    }
-  }
-
-  static Future<http.Response> _putRaw(Uri uri) async {
-    try {
-      return await http
-          .put(uri, headers: _headers())
-          .timeout(ApiConstants.timeout);
-    } catch (e) {
-      throw _wrap(e);
-    }
-  }
-
-  static Future<http.Response> _delete(String path) async {
-    try {
-      return await http
-          .delete(_uri(path), headers: _headers())
-          .timeout(ApiConstants.timeout);
-    } catch (e) {
-      throw _wrap(e);
-    }
-  }
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
 
   static List<dynamic> _extractList(dynamic body, List<String> keys) {
     if (body is List) return body;
@@ -167,22 +111,189 @@ class ApiService {
     return {};
   }
 
+  // ── HTTP verbs ─────────────────────────────────────────────────────────────
+
+  static Future<http.Response> _get(
+    String path, [
+    Map<String, String>? q,
+  ]) async {
+    try {
+      return await http
+          .get(_uri(path, q), headers: _headers())
+          .timeout(ApiConstants.receiveTimeout);
+    } catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  static Future<http.Response> _post(
+    String path,
+    Map<String, dynamic> body, {
+    bool auth = true,
+  }) async {
+    try {
+      return await http
+          .post(
+            _uri(path),
+            headers: _headers(includeAuth: auth),
+            body: jsonEncode(body),
+          )
+          .timeout(ApiConstants.receiveTimeout);
+    } catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  static Future<http.Response> _put(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      return await http
+          .put(_uri(path), headers: _headers(), body: jsonEncode(body))
+          .timeout(ApiConstants.receiveTimeout);
+    } catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  static Future<http.Response> _putRaw(Uri uri) async {
+    try {
+      return await http
+          .put(uri, headers: _headers())
+          .timeout(ApiConstants.receiveTimeout);
+    } catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  static Future<http.Response> _patch(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      return await http
+          .patch(_uri(path), headers: _headers(), body: jsonEncode(body))
+          .timeout(ApiConstants.receiveTimeout);
+    } catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  static Future<http.Response> _delete(String path) async {
+    try {
+      return await http
+          .delete(_uri(path), headers: _headers())
+          .timeout(ApiConstants.receiveTimeout);
+    } catch (e) {
+      throw _wrap(e);
+    }
+  }
+
   // ── Multipart upload ───────────────────────────────────────────────────────
 
-  /// POST /api/leads/import  — multipart CSV file upload
-  static Future<List<LeadModel>> importLeadsFromFile(String filePath) async {
+  /// POST /api/leads/import — multipart file upload (CSV or Excel).
+  /// Supports both .csv and .xlsx files.
+  /// Returns an import summary map with keys:
+  ///   totalRecords, imported, duplicates, failed, invalid
+  static Future<Map<String, dynamic>> importLeadsFromFile(
+    String filePath,
+  ) async {
     try {
       final token = TokenStorage.getToken();
       final req = http.MultipartRequest('POST', _uri(ApiConstants.leadsImport));
-      if (token != null) req.headers['Authorization'] = 'Bearer $token';
+      if (token != null && token.isNotEmpty) {
+        req.headers['Authorization'] = 'Bearer $token';
+      }
+      req.headers['Accept'] = 'application/json';
+
       req.files.add(await http.MultipartFile.fromPath('file', filePath));
-      final streamed = await req.send().timeout(ApiConstants.timeout);
+
+      final streamed = await req.send().timeout(ApiConstants.receiveTimeout);
       final res = await http.Response.fromStream(streamed);
       _assertOk(res);
-      return _extractList(_decode(res), [
-        'leads',
-        'data',
-      ]).map((e) => LeadModel.fromJson(e as Map<String, dynamic>)).toList();
+
+      final body = _decode(res);
+      if (body is Map<String, dynamic>) {
+        return body;
+      }
+      // If backend returns a list (older API style), wrap it
+      if (body is List) {
+        return {
+          'totalRecords': body.length,
+          'imported': body.length,
+          'duplicates': 0,
+          'failed': 0,
+          'invalid': 0,
+          'leads': body,
+        };
+      }
+      return {'imported': 0, 'totalRecords': 0};
+    } catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  /// POST /api/leads/import — multipart upload using raw bytes (Flutter Web).
+  /// On web, FilePicker returns bytes instead of a file path.
+  static Future<Map<String, dynamic>> importLeadsFromBytes({
+    required List<int> bytes,
+    required String fileName,
+  }) async {
+    try {
+      final token = TokenStorage.getToken();
+      final req = http.MultipartRequest('POST', _uri(ApiConstants.leadsImport));
+      if (token != null && token.isNotEmpty) {
+        req.headers['Authorization'] = 'Bearer $token';
+      }
+      req.headers['Accept'] = 'application/json';
+
+      req.files.add(
+        http.MultipartFile.fromBytes('file', bytes, filename: fileName),
+      );
+
+      final streamed = await req.send().timeout(ApiConstants.receiveTimeout);
+      final res = await http.Response.fromStream(streamed);
+      _assertOk(res);
+
+      final body = _decode(res);
+      if (body is Map<String, dynamic>) return body;
+      if (body is List) {
+        return {
+          'totalRecords': body.length,
+          'imported': body.length,
+          'duplicates': 0,
+          'failed': 0,
+          'invalid': 0,
+          'leads': body,
+        };
+      }
+      return {'imported': 0, 'totalRecords': 0};
+    } catch (e) {
+      throw _wrap(e);
+    }
+  }
+
+  /// POST /api/leads/import — sends parsed leads as JSON body (fallback).
+  /// Used for web where file paths are not available.
+  static Future<Map<String, dynamic>> importLeadsFromJson(
+    List<Map<String, String>> leads,
+  ) async {
+    try {
+      final res = await _post(ApiConstants.leadsImport, {'leads': leads});
+      _assertOk(res);
+      final body = _decode(res);
+      if (body is Map<String, dynamic>) return body;
+      if (body is List) {
+        return {
+          'totalRecords': body.length,
+          'imported': body.length,
+          'duplicates': 0,
+          'failed': 0,
+          'invalid': 0,
+        };
+      }
+      return {'imported': 0, 'totalRecords': 0};
     } catch (e) {
       throw _wrap(e);
     }
@@ -191,6 +302,7 @@ class ApiService {
   // ─── AUTH ──────────────────────────────────────────────────────────────────
 
   /// POST /api/auth/login → { token, user }
+  /// Works on unlimited devices simultaneously (JWT is stateless).
   static Future<UserModel> login(String email, String password) async {
     final res = await _post(ApiConstants.login, {
       'email': email,
@@ -216,13 +328,33 @@ class ApiService {
       'phone': mobile,
       'email': email,
       'password': password,
-      'role': role.name,
+      'role': role.name.toUpperCase(), // Backend may expect ADMIN / USER
     }, auth: false);
     _assertOk(res);
     final body = _decode(res) as Map<String, dynamic>;
     final token = body['token'] as String?;
     if (token != null && token.isNotEmpty) await TokenStorage.saveToken(token);
     return UserModel.fromJson(_extractMap(body, ['user']));
+  }
+
+  /// GET /api/auth/me — fetch current user from token
+  static Future<UserModel> getMe() async {
+    final res = await _get(ApiConstants.me);
+    _assertOk(res);
+    final body = _decode(res) as Map<String, dynamic>?;
+    return UserModel.fromJson(_extractMap(body ?? {}, ['user']));
+  }
+
+  /// Alias for getMe() — used by AppProvider.initialize()
+  static Future<UserModel> getUserProfile() => getMe();
+
+  /// POST /api/auth/logout — best-effort server logout
+  static Future<void> logoutOnServer() async {
+    try {
+      await _post(ApiConstants.logout, {});
+    } catch (_) {
+      // Ignore errors — local token cleared regardless
+    }
   }
 
   // ─── USERS ─────────────────────────────────────────────────────────────────
@@ -235,13 +367,6 @@ class ApiService {
       'users',
       'data',
     ]).map((e) => UserModel.fromJson(e as Map<String, dynamic>)).toList();
-  }
-
-  /// GET /api/user/profile
-  static Future<UserModel> getUserProfile() async {
-    final res = await _get(ApiConstants.userProfile);
-    _assertOk(res);
-    return UserModel.fromJson(_extractMap(_decode(res), ['user', 'data']));
   }
 
   /// POST /api/users
@@ -262,6 +387,18 @@ class ApiService {
   static Future<void> deleteUser(String userId) async {
     final res = await _delete(ApiConstants.userById(userId));
     _assertOk(res);
+  }
+
+  /// PATCH /api/users/{id}/status
+  static Future<UserModel> toggleUserStatus(
+    String userId,
+    bool isActive,
+  ) async {
+    final res = await _patch(ApiConstants.userToggleStatus(userId), {
+      'isActive': isActive,
+    });
+    _assertOk(res);
+    return UserModel.fromJson(_extractMap(_decode(res), ['user', 'data']));
   }
 
   // ─── DASHBOARD ─────────────────────────────────────────────────────────────
@@ -322,9 +459,16 @@ class ApiService {
     ]).map((e) => LeadModel.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  /// POST /api/leads
+  /// POST /api/leads — create a single lead
   static Future<LeadModel> createLead(LeadModel lead) async {
     final res = await _post(ApiConstants.leads, lead.toJson());
+    _assertOk(res);
+    return LeadModel.fromJson(_extractMap(_decode(res), ['lead', 'data']));
+  }
+
+  /// PUT /api/leads/{id}
+  static Future<LeadModel> updateLead(LeadModel lead) async {
+    final res = await _put(ApiConstants.leadById(lead.id), lead.toJson());
     _assertOk(res);
     return LeadModel.fromJson(_extractMap(_decode(res), ['lead', 'data']));
   }
@@ -332,6 +476,12 @@ class ApiService {
   /// DELETE /api/leads/{id}
   static Future<void> deleteLead(String id) async {
     final res = await _delete(ApiConstants.leadById(id));
+    _assertOk(res);
+  }
+
+  /// DELETE /api/leads/all — delete all leads
+  static Future<void> deleteAllLeads() async {
+    final res = await _delete(ApiConstants.leadsClear);
     _assertOk(res);
   }
 
@@ -354,11 +504,21 @@ class ApiService {
     _assertOk(res);
   }
 
-  /// PUT /api/leads/{leadId}/notes?notes=value
-  static Future<LeadModel> updateLeadNotes(String leadId, String notes) async {
-    final res = await _putRaw(
-      _uri(ApiConstants.leadNotes(leadId), {'notes': notes}),
-    );
+  /// PATCH /api/leads/{id}/assign — assign a lead to a user
+  static Future<LeadModel> assignLeadToUser(
+    String leadId,
+    String userId,
+  ) async {
+    final res = await _patch(ApiConstants.leadAssignPatch(leadId), {
+      'userId': userId,
+    });
+    _assertOk(res);
+    return LeadModel.fromJson(_extractMap(_decode(res), ['lead', 'data']));
+  }
+
+  /// PUT /api/leads/{id}/unassign
+  static Future<LeadModel> unassignLead(String leadId) async {
+    final res = await _put(ApiConstants.leadUnassign(leadId), {});
     _assertOk(res);
     return LeadModel.fromJson(_extractMap(_decode(res), ['lead', 'data']));
   }
@@ -375,16 +535,24 @@ class ApiService {
     return LeadModel.fromJson(_extractMap(_decode(res), ['lead', 'data']));
   }
 
-  /// Convenience: update both status AND notes for a lead.
-  static Future<LeadModel> updateLead(LeadModel lead) async {
-    LeadModel updated = lead;
-    try {
-      updated = await updateLeadStatus(lead.id, lead.status);
-    } catch (_) {}
-    try {
-      updated = await updateLeadNotes(lead.id, lead.notes);
-    } catch (_) {}
-    return updated;
+  /// PUT /api/leads/{leadId}/notes?notes=value
+  static Future<LeadModel> updateLeadNotes(String leadId, String notes) async {
+    final res = await _putRaw(
+      _uri(ApiConstants.leadNotes(leadId), {'notes': notes}),
+    );
+    _assertOk(res);
+    return LeadModel.fromJson(_extractMap(_decode(res), ['lead', 'data']));
+  }
+
+  /// POST /api/leads/distribute — trigger server-side round-robin distribution
+  static Future<int> distributeLeads() async {
+    final res = await _post(ApiConstants.leadsDistribute, {});
+    _assertOk(res);
+    final body = _decode(res);
+    if (body is Map) {
+      return (body['count'] ?? body['distributed'] ?? 0) as int;
+    }
+    return 0;
   }
 
   // ─── NOTES ─────────────────────────────────────────────────────────────────
@@ -396,7 +564,7 @@ class ApiService {
     return NoteModel.fromJson(_extractMap(_decode(res), ['note', 'data']));
   }
 
-  /// GET /api/notes/{leadId}
+  /// GET /api/notes/lead/{leadId}
   static Future<List<NoteModel>> getNotesByLead(String leadId) async {
     final res = await _get(ApiConstants.notesByLead(leadId));
     _assertOk(res);
@@ -406,10 +574,10 @@ class ApiService {
     ]).map((e) => NoteModel.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  /// Attempt GET /api/notes/user/{userId}; returns [] if endpoint missing.
+  /// GET /api/notes/user/{userId}
   static Future<List<NoteModel>> getNotesForUser(String userId) async {
     try {
-      final res = await _get('/api/notes/user/$userId');
+      final res = await _get(ApiConstants.notesForUser(userId));
       _assertOk(res);
       return _extractList(_decode(res), [
         'notes',
@@ -418,5 +586,38 @@ class ApiService {
     } on ApiException {
       return [];
     }
+  }
+
+  /// PUT /api/notes/{id}
+  static Future<NoteModel> updateNote(NoteModel note) async {
+    final res = await _put(ApiConstants.noteById(note.id), note.toJson());
+    _assertOk(res);
+    return NoteModel.fromJson(_extractMap(_decode(res), ['note', 'data']));
+  }
+
+  /// DELETE /api/notes/{id}
+  static Future<void> deleteNote(String noteId) async {
+    final res = await _delete(ApiConstants.noteById(noteId));
+    _assertOk(res);
+  }
+
+  // ─── SETTINGS ──────────────────────────────────────────────────────────────
+
+  /// GET /api/settings
+  static Future<AppSettings> getSettings() async {
+    final res = await _get(ApiConstants.settings);
+    _assertOk(res);
+    return AppSettings.fromJson(
+      _extractMap(_decode(res), ['settings', 'data']),
+    );
+  }
+
+  /// PUT /api/settings
+  static Future<AppSettings> updateSettings(AppSettings settings) async {
+    final res = await _put(ApiConstants.settings, settings.toJson());
+    _assertOk(res);
+    return AppSettings.fromJson(
+      _extractMap(_decode(res), ['settings', 'data']),
+    );
   }
 }

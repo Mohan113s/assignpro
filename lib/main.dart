@@ -4,12 +4,13 @@ import 'package:provider/provider.dart';
 import 'core/providers/app_provider.dart';
 import 'core/router/app_router.dart';
 import 'core/storage/token_storage.dart';
+import 'core/services/token_storage_service.dart';
 import 'core/theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Lock to portrait mode
+  // Lock to portrait mode on Android/iOS
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -22,8 +23,11 @@ Future<void> main() async {
     ),
   );
 
-  // Initialize token storage (SharedPreferences for JWT only)
+  // Initialize BOTH token storage implementations to ensure consistency.
+  // TokenStorage (network/) is the canonical one used by AppProvider.
+  // TokenStorageService (services/) is kept for backward compat.
   await TokenStorage.init();
+  await TokenStorageService.init();
 
   runApp(
     ChangeNotifierProvider(

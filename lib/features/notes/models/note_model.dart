@@ -30,12 +30,32 @@ class NoteModel {
     'updatedAt': updatedAt.toIso8601String(),
   };
 
-  factory NoteModel.fromJson(Map<String, dynamic> json) => NoteModel(
-    id: json['id'],
-    userId: json['userId'],
-    title: json['title'] ?? '',
-    content: json['content'] ?? '',
-    createdAt: DateTime.parse(json['createdAt']),
-    updatedAt: DateTime.parse(json['updatedAt']),
+  factory NoteModel.fromJson(Map<String, dynamic> json) {
+    DateTime parseDate(dynamic v) {
+      if (v == null) return DateTime.now();
+      try {
+        return DateTime.parse(v.toString());
+      } catch (_) {
+        return DateTime.now();
+      }
+    }
+
+    return NoteModel(
+      id: (json['id'] ?? _uuid.v4()).toString(),
+      userId: (json['userId'] ?? json['user_id'] ?? '').toString(),
+      title: json['title'] as String? ?? '',
+      content: json['content'] as String? ?? json['body'] as String? ?? '',
+      createdAt: parseDate(json['createdAt'] ?? json['created_at']),
+      updatedAt: parseDate(json['updatedAt'] ?? json['updated_at']),
+    );
+  }
+
+  NoteModel copyWith({String? title, String? content}) => NoteModel(
+    id: id,
+    userId: userId,
+    title: title ?? this.title,
+    content: content ?? this.content,
+    createdAt: createdAt,
+    updatedAt: DateTime.now(),
   );
 }

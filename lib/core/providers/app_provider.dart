@@ -49,6 +49,7 @@ class AppProvider extends ChangeNotifier {
   // ─── Init ─────────────────────────────────────────────────────────────────
 
   /// Called once at app startup. Re-hydrates session if a JWT token exists.
+  /// JWT is stateless — works on unlimited devices simultaneously.
   Future<void> initialize() async {
     if (!TokenStorage.isLoggedIn()) return;
     _setLoading(true);
@@ -104,6 +105,7 @@ class AppProvider extends ChangeNotifier {
   // ─── AUTH ──────────────────────────────────────────────────────────────────
 
   /// Returns null on success, or an error message on failure.
+  /// Multiple device login: JWT is stateless — same account works on any device.
   Future<String?> login(String email, String password) async {
     _setLoading(true);
     try {
@@ -116,7 +118,7 @@ class AppProvider extends ChangeNotifier {
       return null;
     } on ApiException catch (e) {
       return e.message;
-    } catch (_) {
+    } catch (e) {
       return 'Login failed. Please check your connection and try again.';
     } finally {
       _setLoading(false);
@@ -148,7 +150,7 @@ class AppProvider extends ChangeNotifier {
       return null;
     } on ApiException catch (e) {
       return e.message;
-    } catch (_) {
+    } catch (e) {
       return 'Registration failed. Please try again.';
     } finally {
       _setLoading(false);
@@ -156,6 +158,10 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // Best-effort server-side logout (doesn't block)
+    try {
+      await ApiService.logoutOnServer();
+    } catch (_) {}
     await TokenStorage.clear();
     _currentUser = null;
     _leads = [];
@@ -200,23 +206,22 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> toggleUserStatus(UserModel user) async {
-    // Update locally optimistically, backend will confirm
     final toggled = user.copyWith(isActive: !user.isActive);
-    await ApiService.updateUser(toggled);
+    try {
+      await ApiService.toggleUserStatus(user.id, toggled.isActive);
+    } catch (_) {
+      // Fallback to updateUser if toggle endpoint not available
+      await ApiService.updateUser(toggled);
+    }
     _users = _users.map((u) => u.id == toggled.id ? toggled : u).toList();
     notifyListeners();
   }
 
   // ─── LEADS ─────────────────────────────────────────────────────────────────
 
-  /// Import leads from a CSV file path (multipart upload).
+  /// Import leads from a pre-parsed list (used when multipart upload is done
+  /// directly from the screen via [ApiService.importLeadsFromFile]).
   Future<void> importLeads(List<LeadModel> parsedLeads) async {
-    // The CSV is parsed on-device; each lead is created individually via bulk.
-    // Use assign-bulk or individual POST per lead.
-    // Since the backend has POST /api/leads/import as multipart, this method
-    // is used when the file-path approach is possible. The screen will call
-    // importLeadsFromFile() directly when it has the file path.
-    // For the JSON list path (if backend supports), we create each lead:
     for (final lead in parsedLeads) {
       final created = await ApiService.createLead(lead);
       _leads = [..._leads, created];
@@ -224,8 +229,20 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Reload all leads from the backend (after import).
+  Future<int> refreshLeads() async {
+    _leads = await ApiService.getAllLeads();
+    notifyListeners();
+    return _leads.length;
+  }
+
+  /// Trigger server-side round-robin lead distribution, then reload.
   Future<int> distributeLeads() async {
-    // Reload all leads after distribution (backend handles round-robin)
+    try {
+      await ApiService.distributeLeads();
+    } catch (_) {
+      // If distribution endpoint doesn't exist, just reload
+    }
     _leads = await ApiService.getAllLeads();
     notifyListeners();
     return _leads.length;
@@ -240,32 +257,49 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Unassign a lead — set assignedUserId to null via updateLead
+  /// Unassign a lead — calls dedicated unassign endpoint
   Future<void> unassignLead(LeadModel lead) async {
-    // Backend should handle a PUT with null userId or a dedicated endpoint
-    final unassigned = lead.copyWith(assignedUserId: null, status: 'Pending');
-    await ApiService.updateLead(unassigned);
-    _leads = _leads.map((l) => l.id == unassigned.id ? unassigned : l).toList();
+    try {
+      final updated = await ApiService.unassignLead(lead.id);
+      _leads = _leads.map((l) => l.id == updated.id ? updated : l).toList();
+    } catch (_) {
+      // Fallback: update lead with null assignedUserId
+      final unassigned = lead.copyWith(assignedUserId: null, status: 'Pending');
+      await ApiService.updateLead(unassigned);
+      _leads = _leads
+          .map((l) => l.id == unassigned.id ? unassigned : l)
+          .toList();
+    }
     notifyListeners();
   }
 
   Future<void> updateLead(LeadModel lead) async {
-    // Update status and notes separately using the dedicated endpoints
+    // Try dedicated status/notes endpoints first, fall back to full PUT
     LeadModel updated = lead;
     try {
       updated = await ApiService.updateLeadStatus(lead.id, lead.status);
     } catch (_) {}
     try {
       updated = await ApiService.updateLeadNotes(lead.id, lead.notes);
-    } catch (_) {}
+    } catch (_) {
+      try {
+        updated = await ApiService.updateLead(lead);
+      } catch (_) {}
+    }
     _leads = _leads.map((l) => l.id == updated.id ? updated : l).toList();
     notifyListeners();
   }
 
   Future<void> clearAllLeads() async {
-    // Delete all leads — cycle through (no bulk-delete endpoint provided)
-    for (final lead in List<LeadModel>.from(_leads)) {
-      await ApiService.deleteLead(lead.id);
+    // Use bulk delete endpoint if available, otherwise delete individually
+    try {
+      await ApiService.deleteAllLeads();
+    } catch (_) {
+      for (final lead in List<LeadModel>.from(_leads)) {
+        try {
+          await ApiService.deleteLead(lead.id);
+        } catch (_) {}
+      }
     }
     _leads = [];
     notifyListeners();
@@ -280,12 +314,19 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> updateNote(NoteModel note) async {
-    // Update in-memory (no dedicated update endpoint listed)
-    _notes = _notes.map((n) => n.id == note.id ? note : n).toList();
+    try {
+      final updated = await ApiService.updateNote(note);
+      _notes = _notes.map((n) => n.id == updated.id ? updated : n).toList();
+    } catch (_) {
+      _notes = _notes.map((n) => n.id == note.id ? note : n).toList();
+    }
     notifyListeners();
   }
 
   Future<void> deleteNote(String noteId) async {
+    try {
+      await ApiService.deleteNote(noteId);
+    } catch (_) {}
     _notes = _notes.where((n) => n.id != noteId).toList();
     notifyListeners();
   }
@@ -293,7 +334,11 @@ class AppProvider extends ChangeNotifier {
   // ─── SETTINGS ──────────────────────────────────────────────────────────────
 
   Future<void> updateSettings(AppSettings newSettings) async {
-    _settings = newSettings; // local update; extend if backend has endpoint
+    try {
+      _settings = await ApiService.updateSettings(newSettings);
+    } catch (_) {
+      _settings = newSettings; // Local fallback
+    }
     notifyListeners();
   }
 

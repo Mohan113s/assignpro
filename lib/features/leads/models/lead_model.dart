@@ -39,31 +39,54 @@ class LeadModel {
     'updatedAt': updatedAt.toIso8601String(),
   };
 
-  factory LeadModel.fromJson(Map<String, dynamic> json) => LeadModel(
-    id: json['id'],
-    customerName: json['customerName'] ?? '',
-    phoneNumber: json['phoneNumber'] ?? '',
-    status: json['status'] ?? 'Pending',
-    assignedUserId: json['assignedUserId'],
-    notes: json['notes'] ?? '',
-    createdAt: DateTime.parse(json['createdAt']),
-    updatedAt: DateTime.parse(json['updatedAt']),
-  );
+  /// Safely parses a LeadModel from JSON with null-safe date handling.
+  factory LeadModel.fromJson(Map<String, dynamic> json) {
+    DateTime parseDate(dynamic v) {
+      if (v == null) return DateTime.now();
+      try {
+        return DateTime.parse(v.toString());
+      } catch (_) {
+        return DateTime.now();
+      }
+    }
 
+    return LeadModel(
+      id: (json['id'] ?? _uuid.v4()).toString(),
+      customerName:
+          json['customerName'] as String? ?? json['name'] as String? ?? '',
+      phoneNumber:
+          json['phoneNumber'] as String? ??
+          json['phone'] as String? ??
+          json['mobile'] as String? ??
+          '',
+      status: json['status'] as String? ?? 'Pending',
+      assignedUserId: json['assignedUserId'] as String?,
+      notes: json['notes'] as String? ?? '',
+      createdAt: parseDate(json['createdAt'] ?? json['created_at']),
+      updatedAt: parseDate(json['updatedAt'] ?? json['updated_at']),
+    );
+  }
+
+  /// copyWith supports explicitly setting assignedUserId to null (unassign).
   LeadModel copyWith({
     String? customerName,
     String? phoneNumber,
     String? status,
-    String? assignedUserId,
+    Object? assignedUserId = _sentinel, // Use sentinel to allow null-setting
     String? notes,
   }) => LeadModel(
     id: id,
     customerName: customerName ?? this.customerName,
     phoneNumber: phoneNumber ?? this.phoneNumber,
     status: status ?? this.status,
-    assignedUserId: assignedUserId ?? this.assignedUserId,
+    assignedUserId: assignedUserId == _sentinel
+        ? this.assignedUserId
+        : assignedUserId as String?,
     notes: notes ?? this.notes,
     createdAt: createdAt,
     updatedAt: DateTime.now(),
   );
 }
+
+// Sentinel value to distinguish "not provided" from "null" in copyWith
+const Object _sentinel = Object();

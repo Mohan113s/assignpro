@@ -8,6 +8,8 @@ class UserModel {
   final String id;
   String name;
   String email;
+  // Password is NEVER stored from API responses — only used during registration.
+  // Backend never returns password in JSON for security reasons.
   String password;
   String phone;
   UserRole role;
@@ -18,7 +20,7 @@ class UserModel {
     String? id,
     required this.name,
     required this.email,
-    required this.password,
+    this.password = '', // Always empty from API — backend never returns it
     this.phone = '',
     this.role = UserRole.user,
     this.isActive = true,
@@ -30,26 +32,45 @@ class UserModel {
     'id': id,
     'name': name,
     'email': email,
-    'password': password,
+    // Do NOT send empty password on update — only when it's meaningful
+    if (password.isNotEmpty) 'password': password,
     'phone': phone,
-    'role': role.name,
+    'role': role.name.toUpperCase(), // Backend expects ADMIN / USER
     'isActive': isActive,
     'createdAt': createdAt.toIso8601String(),
   };
 
-  factory UserModel.fromJson(Map<String, dynamic> json) => UserModel(
-    id: json['id'],
-    name: json['name'],
-    email: json['email'],
-    password: json['password'],
-    phone: json['phone'] ?? '',
-    role: UserRole.values.firstWhere(
-      (e) => e.name == json['role'],
+  /// Safely parses a UserModel from JSON.
+  /// Defensive: handles missing/null fields — backend never returns password.
+  factory UserModel.fromJson(Map<String, dynamic> json) {
+    // Parse role case-insensitively — backend may return ADMIN, admin, Admin
+    final rawRole = (json['role'] as String? ?? 'user').toLowerCase();
+    final role = UserRole.values.firstWhere(
+      (e) => e.name.toLowerCase() == rawRole,
       orElse: () => UserRole.user,
-    ),
-    isActive: json['isActive'] ?? true,
-    createdAt: DateTime.parse(json['createdAt']),
-  );
+    );
+
+    // Parse dates safely
+    DateTime parseDate(dynamic v) {
+      if (v == null) return DateTime.now();
+      try {
+        return DateTime.parse(v.toString());
+      } catch (_) {
+        return DateTime.now();
+      }
+    }
+
+    return UserModel(
+      id: (json['id'] ?? json['userId'] ?? _uuid.v4()).toString(),
+      name: json['name'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+      password: '', // Never populated from API for security
+      phone: json['phone'] as String? ?? json['mobile'] as String? ?? '',
+      role: role,
+      isActive: json['isActive'] as bool? ?? json['active'] as bool? ?? true,
+      createdAt: parseDate(json['createdAt'] ?? json['created_at']),
+    );
+  }
 
   UserModel copyWith({
     String? name,
