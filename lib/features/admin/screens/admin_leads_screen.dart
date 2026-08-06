@@ -101,8 +101,9 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
         // Mobile/Desktop: use file path for multipart upload
         final filePath = file.path;
         if (filePath == null) {
-          if (mounted)
+          if (mounted) {
             AppSnackbar.error(context, 'Could not access file path.');
+          }
           setState(() => _isImporting = false);
           return;
         }

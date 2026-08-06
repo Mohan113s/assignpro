@@ -372,6 +372,7 @@ class _RegisterFormState extends State<_RegisterForm> {
       email: _emailCtrl.text.trim(),
       password: _passCtrl.text,
       role: widget.role,
+      securityKey: _isAdmin ? _secKeyCtrl.text.trim() : null,
     );
 
     if (!mounted) return;

@@ -132,6 +132,7 @@ class AppProvider extends ChangeNotifier {
     required String email,
     required String password,
     required UserRole role,
+    String? securityKey,
   }) async {
     _setLoading(true);
     try {
@@ -141,6 +142,7 @@ class AppProvider extends ChangeNotifier {
         email: email,
         password: password,
         role: role,
+        securityKey: securityKey,
       );
       await TokenStorage.saveSession(
         userId: _currentUser!.id,

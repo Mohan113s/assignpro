@@ -301,7 +301,7 @@ class ApiService {
 
   // ─── AUTH ──────────────────────────────────────────────────────────────────
 
-  /// POST /api/auth/login → { token, user }
+  /// POST /api/auth/login → { token, role, message, user }
   /// Works on unlimited devices simultaneously (JWT is stateless).
   static Future<UserModel> login(String email, String password) async {
     final res = await _post(ApiConstants.login, {
@@ -310,31 +310,59 @@ class ApiService {
     }, auth: false);
     _assertOk(res);
     final body = _decode(res) as Map<String, dynamic>;
+    // Check for error message in response body (backend returns 200 with error message)
+    final msg = body['message'] as String? ?? '';
     final token = body['token'] as String?;
-    if (token != null && token.isNotEmpty) await TokenStorage.saveToken(token);
-    return UserModel.fromJson(_extractMap(body, ['user']));
+    if (token == null || token.isEmpty) {
+      throw ApiException(
+        msg.isNotEmpty ? msg : 'Login failed. Incorrect email or password.',
+      );
+    }
+    await TokenStorage.saveToken(token);
+    // User data may be nested under 'user' key or at root level
+    final userMap = _extractMap(body, ['user']);
+    return UserModel.fromJson(userMap.isNotEmpty ? userMap : body);
   }
 
-  /// POST /api/auth/register → { token, user }
+  /// POST /api/auth/register → { token, role, message, user }
+  /// Backend saves user to AWS PostgreSQL and returns JWT immediately.
   static Future<UserModel> register({
     required String name,
     required String mobile,
     required String email,
     required String password,
     required UserRole role,
+    String? securityKey,
   }) async {
-    final res = await _post(ApiConstants.register, {
+    final payload = <String, dynamic>{
       'name': name,
       'phone': mobile,
       'email': email,
       'password': password,
-      'role': role.name.toUpperCase(), // Backend may expect ADMIN / USER
-    }, auth: false);
+      'role': role.name.toUpperCase(),
+    };
+    // Include security key for admin registration
+    if (securityKey != null && securityKey.isNotEmpty) {
+      payload['securityKey'] = securityKey;
+    }
+    final res = await _post(ApiConstants.register, payload, auth: false);
     _assertOk(res);
     final body = _decode(res) as Map<String, dynamic>;
+    // Check for error message in response body
+    final msg = body['message'] as String? ?? '';
     final token = body['token'] as String?;
-    if (token != null && token.isNotEmpty) await TokenStorage.saveToken(token);
-    return UserModel.fromJson(_extractMap(body, ['user']));
+    if (token == null || token.isEmpty) {
+      // Backend returned an error (e.g., email already exists)
+      throw ApiException(
+        msg.isNotEmpty
+            ? msg
+            : 'Registration failed. Please check your details and try again.',
+      );
+    }
+    await TokenStorage.saveToken(token);
+    // User data may be nested under 'user' key or at root level
+    final userMap = _extractMap(body, ['user']);
+    return UserModel.fromJson(userMap.isNotEmpty ? userMap : body);
   }
 
   /// GET /api/auth/me — fetch current user from token
