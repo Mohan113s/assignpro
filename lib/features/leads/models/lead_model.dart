@@ -50,6 +50,13 @@ class LeadModel {
       }
     }
 
+    // Parse assignedUserId — backend may return it as int, long, or string
+    final rawAssignedUserId = json['assignedUserId'];
+    String? assignedUserId;
+    if (rawAssignedUserId != null && rawAssignedUserId.toString().isNotEmpty) {
+      assignedUserId = rawAssignedUserId.toString();
+    }
+
     return LeadModel(
       id: (json['id'] ?? _uuid.v4()).toString(),
       customerName:
@@ -60,7 +67,7 @@ class LeadModel {
           json['mobile'] as String? ??
           '',
       status: json['status'] as String? ?? 'Pending',
-      assignedUserId: json['assignedUserId'] as String?,
+      assignedUserId: assignedUserId,
       notes: json['notes'] as String? ?? '',
       createdAt: parseDate(json['createdAt'] ?? json['created_at']),
       updatedAt: parseDate(json['updatedAt'] ?? json['updated_at']),
