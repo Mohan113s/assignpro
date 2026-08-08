@@ -383,30 +383,6 @@ class _RegisterFormState extends State<_RegisterForm> {
       return;
     }
 
-    // Login the newly registered user automatically
-    final loginError = await provider.login(
-      _emailCtrl.text.trim(),
-      _passCtrl.text,
-    );
-
-    if (!mounted) return;
-
-    if (loginError != null) {
-      // Registered but couldn't auto-login, go to login screen
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Account created! Please sign in.'),
-          backgroundColor: AppTheme.successColor,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-        ),
-      );
-      Navigator.pushReplacementNamed(context, AppRouter.login);
-      return;
-    }
-
     final user = provider.currentUser!;
     Navigator.pushReplacementNamed(
       context,
