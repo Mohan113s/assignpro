@@ -26,6 +26,7 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
   // Multi-select for manual assignment
   final Set<String> _selectedLeadIds = {};
   bool _selectionMode = false;
+  String? _selectedUserId;
 
   @override
   void initState() {
@@ -70,7 +71,7 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
       // Support BOTH CSV and Excel (.xlsx)
       final result = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv', 'xlsx', 'txt'],
+        allowedExtensions: ['csv', 'xlsx'],
         withData: kIsWeb, // On web we need bytes; on mobile we use file path
       );
 
@@ -212,27 +213,6 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
     );
   }
 
-  Future<void> _showAssignDialog(List<LeadModel> selectedLeads) async {
-    final provider = context.read<AppProvider>();
-    final activeUsers = provider.regularUsers.where((u) => u.isActive).toList();
-
-    if (activeUsers.isEmpty) {
-      AppSnackbar.error(context, 'No active users found. Create users first.');
-      return;
-    }
-
-    await showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => _AssignBottomSheet(
-        selectedLeads: selectedLeads,
-        activeUsers: activeUsers,
-        onAssigned: _clearSelection,
-      ),
-    );
-  }
-
   Future<void> _clearLeads() async {
     final confirmed = await ConfirmDialog.show(
       context,
@@ -369,11 +349,26 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton.icon(
-                    onPressed: () {
+                    onPressed: () async {
+                      if (_selectedUserId == null) {
+                        AppSnackbar.error(
+                          context,
+                          'Please select a user from the list above first.',
+                        );
+                        return;
+                      }
                       final sel = provider.leads
                           .where((l) => _selectedLeadIds.contains(l.id))
                           .toList();
-                      _showAssignDialog(sel);
+                      await context.read<AppProvider>().assignLeadsToUser(
+                        sel,
+                        _selectedUserId!,
+                      );
+                      AppSnackbar.success(
+                        context,
+                        '${sel.length} lead(s) assigned successfully!',
+                      );
+                      _clearSelection();
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.white,
@@ -387,6 +382,97 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
                     label: const Text(
                       'Assign',
                       style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // ── Registered Users (For Assignment) ──
+          if (provider.regularUsers.where((u) => u.isActive).isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.white,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Select User For Assignment:',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 50,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: provider.regularUsers
+                          .where((u) => u.isActive)
+                          .length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (_, i) {
+                        final user = provider.regularUsers
+                            .where((u) => u.isActive)
+                            .toList()[i];
+                        final isSelected = _selectedUserId == user.id;
+                        return GestureDetector(
+                          onTap: () => setState(
+                            () => _selectedUserId = isSelected ? null : user.id,
+                          ),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? AppTheme.primaryBlue.withOpacity(0.1)
+                                  : Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: isSelected
+                                    ? AppTheme.primaryBlue
+                                    : AppTheme.dividerColor,
+                                width: isSelected ? 1.5 : 1,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 12,
+                                  backgroundColor: isSelected
+                                      ? AppTheme.primaryBlue
+                                      : AppTheme.primaryBlue.withOpacity(0.12),
+                                  child: Text(
+                                    user.name.isNotEmpty
+                                        ? user.name[0].toUpperCase()
+                                        : 'U',
+                                    style: TextStyle(
+                                      color: isSelected
+                                          ? Colors.white
+                                          : AppTheme.primaryBlue,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  user.name,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12,
+                                    color: isSelected
+                                        ? AppTheme.primaryBlue
+                                        : AppTheme.textPrimary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
