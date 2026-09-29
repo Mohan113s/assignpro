@@ -20,6 +20,7 @@ class _LoginScreenState extends State<LoginScreen>
 
   bool _obscurePass = true;
   bool _isLoading = false;
+  String _statusMessage = '';
 
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
@@ -51,12 +52,37 @@ class _LoginScreenState extends State<LoginScreen>
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _statusMessage = '';
+    });
+
+    // Show 'Connecting to server...' if login takes > 2 seconds (Render cold-start)
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted && _isLoading && _statusMessage.isEmpty) {
+        setState(() => _statusMessage = 'Connecting to server...');
+      }
+    });
+    // Show more detailed message after 8 seconds
+    Future.delayed(const Duration(seconds: 8), () {
+      if (mounted && _isLoading) {
+        setState(
+          () => _statusMessage =
+              'Server is waking up (free tier). Please wait...',
+        );
+      }
+    });
+
+    final sw = Stopwatch()..start();
     final provider = context.read<AppProvider>();
     final error = await provider.login(_emailCtrl.text.trim(), _passCtrl.text);
+    debugPrint('[LOGIN] Total login + data load: ${sw.elapsedMilliseconds}ms');
 
     if (!mounted) return;
-    setState(() => _isLoading = false);
+    setState(() {
+      _isLoading = false;
+      _statusMessage = '';
+    });
 
     if (error != null) {
       _showError(error);
@@ -259,13 +285,28 @@ class _LoginScreenState extends State<LoginScreen>
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 child: _isLoading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          ),
+                          if (_statusMessage.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              _statusMessage,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ],
+                        ],
                       )
                     : const Text(
                         'Sign In',

@@ -109,12 +109,19 @@ class AppProvider extends ChangeNotifier {
   Future<String?> login(String email, String password) async {
     _setLoading(true);
     try {
+      final sw = Stopwatch()..start();
       _currentUser = await ApiService.login(email, password);
+      debugPrint('[TIMING] POST /api/auth/login: ${sw.elapsedMilliseconds}ms');
+
       await TokenStorage.saveSession(
         userId: _currentUser!.id,
         role: _currentUser!.role.name,
       );
+
+      sw.reset();
       await _loadDataForRole();
+      debugPrint('[TIMING] _loadDataForRole: ${sw.elapsedMilliseconds}ms');
+
       return null;
     } on ApiException catch (e) {
       return e.message;

@@ -71,7 +71,7 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
       // Support BOTH CSV and Excel (.xlsx)
       final result = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv', 'xlsx'],
+        allowedExtensions: ['csv', 'xlsx', 'xls'],
         withData: kIsWeb, // On web we need bytes; on mobile we use file path
       );
 
@@ -119,9 +119,15 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
       final duplicates = summary['duplicates'] as int? ?? 0;
       final failed = summary['failed'] as int? ?? 0;
       final invalid = summary['invalid'] as int? ?? 0;
+      final message = summary['message'] as String? ?? '';
+      final errors = (summary['errors'] as List?)?.cast<String>() ?? [];
 
       if (imported == 0 && totalRecords == 0) {
-        AppSnackbar.error(context, 'No valid leads found in the file.');
+        // Show actual backend error message if available
+        final errorMsg = message.isNotEmpty
+            ? message
+            : 'No valid leads found in the file.';
+        if (mounted) AppSnackbar.error(context, errorMsg);
         setState(() => _isImporting = false);
         return;
       }
@@ -136,6 +142,8 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
           duplicates: duplicates,
           failed: failed,
           invalid: invalid,
+          message: message,
+          errors: errors,
         );
       }
     } on ApiException catch (e) {
@@ -153,34 +161,97 @@ class _AdminLeadsScreenState extends State<AdminLeadsScreen>
     required int duplicates,
     required int failed,
     required int invalid,
+    String message = '',
+    List<String> errors = const [],
   }) {
+    final hasErrors = imported == 0 || errors.isNotEmpty;
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
             Icon(
-              Icons.check_circle_rounded,
-              color: Color(0xFF2E7D32),
+              hasErrors && imported == 0
+                  ? Icons.warning_amber_rounded
+                  : Icons.check_circle_rounded,
+              color: hasErrors && imported == 0
+                  ? AppTheme.warningColor
+                  : const Color(0xFF2E7D32),
               size: 22,
             ),
-            SizedBox(width: 8),
-            Text(
+            const SizedBox(width: 8),
+            const Text(
               'Import Summary',
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _summaryRow('Total Records', totalRecords, AppTheme.textSecondary),
-            const Divider(height: 20),
-            _summaryRow('✅ Imported', imported, const Color(0xFF2E7D32)),
-            _summaryRow('⚠️ Duplicates', duplicates, AppTheme.warningColor),
-            _summaryRow('❌ Failed', failed, AppTheme.errorColor),
-            _summaryRow('🚫 Invalid', invalid, AppTheme.errorColor),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (message.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    message,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: hasErrors && imported == 0
+                          ? AppTheme.errorColor
+                          : AppTheme.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              _summaryRow(
+                'Total Records',
+                totalRecords,
+                AppTheme.textSecondary,
+              ),
+              const Divider(height: 20),
+              _summaryRow('✅ Imported', imported, const Color(0xFF2E7D32)),
+              _summaryRow('⚠️ Duplicates', duplicates, AppTheme.warningColor),
+              _summaryRow('❌ Failed', failed, AppTheme.errorColor),
+              _summaryRow('🚫 Invalid', invalid, AppTheme.errorColor),
+              if (errors.isNotEmpty) ...[
+                const Divider(height: 20),
+                const Text(
+                  'Details:',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                ...errors
+                    .take(10)
+                    .map(
+                      (e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: Text(
+                          e,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                if (errors.length > 10)
+                  Text(
+                    '... and ${errors.length - 10} more',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+              ],
+            ],
+          ),
         ),
         actions: [
           TextButton(

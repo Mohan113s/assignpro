@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'api_constants.dart';
 import '../storage/token_storage.dart';
 import '../../features/auth/models/user_model.dart';
@@ -190,12 +191,26 @@ class ApiService {
     }
   }
 
-  // ── Multipart upload ───────────────────────────────────────────────────────
+  /// Determines the correct MIME type for a file based on its extension.
+  static MediaType? _mimeTypeForFile(String filename) {
+    final lower = filename.toLowerCase();
+    if (lower.endsWith('.csv')) return MediaType('text', 'csv');
+    if (lower.endsWith('.xlsx')) {
+      return MediaType(
+        'application',
+        'vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+    }
+    if (lower.endsWith('.xls')) {
+      return MediaType('application', 'vnd.ms-excel');
+    }
+    return null;
+  }
 
   /// POST /api/leads/import — multipart file upload (CSV or Excel).
-  /// Supports both .csv and .xlsx files.
+  /// Supports .csv, .xlsx, and .xls files.
   /// Returns an import summary map with keys:
-  ///   totalRecords, imported, duplicates, failed, invalid
+  ///   totalRecords, imported, duplicates, failed, invalid, message, errors
   static Future<Map<String, dynamic>> importLeadsFromFile(
     String filePath,
   ) async {
@@ -207,7 +222,16 @@ class ApiService {
       }
       req.headers['Accept'] = 'application/json';
 
-      req.files.add(await http.MultipartFile.fromPath('file', filePath));
+      final fileName = filePath.split('/').last.split('\\').last;
+      final contentType = _mimeTypeForFile(fileName);
+
+      req.files.add(
+        await http.MultipartFile.fromPath(
+          'file',
+          filePath,
+          contentType: contentType,
+        ),
+      );
 
       final streamed = await req.send().timeout(ApiConstants.receiveTimeout);
       final res = await http.Response.fromStream(streamed);
@@ -248,8 +272,15 @@ class ApiService {
       }
       req.headers['Accept'] = 'application/json';
 
+      final contentType = _mimeTypeForFile(fileName);
+
       req.files.add(
-        http.MultipartFile.fromBytes('file', bytes, filename: fileName),
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: fileName,
+          contentType: contentType,
+        ),
       );
 
       final streamed = await req.send().timeout(ApiConstants.receiveTimeout);
